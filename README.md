@@ -1,4 +1,4 @@
-# ASTRiDE (Automated Streak Detection for Astronomical Images)
+# 2ASTRiDE (Automated Streak Detection for Astronomical Images)
 
 <div align="center">
 <img src="./astride/datasets/images/ASTRiDE.png">
