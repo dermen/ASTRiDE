@@ -6,7 +6,8 @@ import pylab as pl
 from skimage import measure
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
-from photutils import Background2D, SigmaClip, MedianBackground
+from astropy.stats import SigmaClip
+from photutils import Background2D, MedianBackground
 
 from astride.utils.edge import EDGE
 
@@ -41,6 +42,8 @@ Threshold to search contours (i.e. edges of an input image)
     output_path: str, optional
     Path to save figures and output files. If None, the base filename
     is used as the folder name.
+        Path to save figures and output files. If None, the input folder name
+        and base filename is used as the output folder name.
     """
     def __init__(self, filename, remove_bkg='constant', bkg_box_size=50,
             contour_threshold=3., min_points=10, shape_cut=0.2,
@@ -87,8 +90,8 @@ Threshold to search contours (i.e. edges of an input image)
 
         # Set output path.
         if output_path is None:
-            output_path = './%s/' % \
-                          ('.'.join(os.path.basename(filename).split('.')[:-1]))
+            output_path = '%s' % \
+                          (filename[:filename.rfind('.')])
         if output_path[-1] != '/':
             output_path += '/'
         self.output_path = output_path
@@ -261,7 +264,7 @@ Threshold to search contours (i.e. edges of an input image)
 
         pl.xlabel('X/pixel')
         pl.ylabel('Y/pixel')
-        pl.axis([0, self.image.shape[0], 0, self.image.shape[1]])
+        pl.axis([0, self.image.shape[1], 0, self.image.shape[0]])
         pl.savefig('%sall.png' % self.output_path)
 
         # Plot all individual edges (connected).
