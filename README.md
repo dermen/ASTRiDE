@@ -123,6 +123,7 @@ The output text file named as "streaks.txt" contains following information.
 |----:|:------------|
 | ID  | Index |
 | x_center, y_center  | Coordinate of the center  |
+| RA, Dec | RA and Dec coordinates if a FITS file provides WCS header |
 | area  | Area inside a streak  |
 | perimeter  | Perimeter of a streak  |
 | shape_factor  | 4 * PI * area / perimeter^2 |
@@ -132,7 +133,7 @@ The output text file named as "streaks.txt" contains following information.
 | connectivity  | ID of another streak that is likely to be linked to the current streak  |
 
 
-These information are accessible using the ASTRiDE Streak instance. For details, see [this section](#accessible-information-inside-the-streak-instance).
+Most of these information are accessible using the ASTRiDE Streak instance as well. For details, see [this section](#accessible-information-inside-the-streak-instance).
 
 
 ## 4. How to Use ASTRiDE? 
@@ -208,6 +209,7 @@ That's it! The above one-line command will do everything needed to detect streak
     [ All the borders (color-coded) extracted using the contour map ]</div>
   
   <br/>
+
   * Streak determination based on the morphologies of each  border
     * As we can see from the above figure, there are many borders of star-like sources that are definitely <b>not</b> streaks. ASTRiDE removes such star-like sources using morphological parameters derived from each border such as:
     
@@ -224,6 +226,7 @@ The following figure shows the remaining two streak after these cut.
 [ Two streaks after the morphology cut. The numbers are their IDs. ]</div>
   
   <br/><br/>
+
   * Link streaks by their slopes
     * As shown in the above image, ASTRiDE finally detected two streaks. However, these two streaks are not really separated two streaks. They seem to be one streak, but separately detected since the middle part of the streak is disconnected. ASTRiDE connects (i.e. link) such streaks by their slopes derived using the linear line fitting. If their slopes are within the "connectivity_angle", and also the slope between the two centers of the two streaks are within the "connectivity_angle" with each streak, ASTRiDE determines that the two streaks are connected. This is why the "all.png" shown in the [section "Test"](#3-test) has only one red dashed-line box surrounding the two streaks. If one streak (i.e. s1) is determined to be linked with another streak (i.e. s2), s1's "connectivity" value is the index of s2. If s2 is again linked with s3, then again s2's "connectivity" is the index of s3. If s3 is not linked with any other streaks, s3's "connectivity" is -1.
      
@@ -369,10 +372,20 @@ This will send log messages to both console and a log file. Note that the path m
     - Tested with several different clustering algorithms (e.g. Birch, KMeans, hierarchical clustering, etc.), and it works well for clear outliers but not for ambiguous outliers (of course not since, strictly speaking, they are not even outliers). In other words, it detects long and thin streaks easily since they are clear outliers (i.e. they are not point sources), but for short and rather thick streaks, it fails to detect. In contrast, the current method using morphological parameters detects both kinds.
     - Nevertheless, it is possible to use clustering methods as supplementary detection methods for long streaks.
 
+### v?.?.?
+- Add RA, Dec to astride instance so that it is accessible internally.
+
+### v0.3.6
+- Sky coordinates are also reported in RA, Dec
+
+### v0.3.5
+- `fully_connected` parameter of `skimage.measure.find_contours` is exposed to Streak class.
+- fixed a bug when calling phoutils daofild.
+
 ### v0.3.4
-- All Python library dependencies are updated to the latest versions.
-- Default output_path in Streak class is modified to include the full path of the input filepath.
-- X/y plot coordinate swapping bug fixed.
+- all Python library dependencies are updated to the latest versions.
+- default output_path in Streak class is modified to include the full path of the input filepath.
+- x/y plot coordinate swapping bug fixed.
 
 ### v0.3.3
 - phoutils library update to v0.4.

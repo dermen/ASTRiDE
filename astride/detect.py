@@ -1,4 +1,5 @@
 import os
+import sys
 
 import numpy as np
 import pylab as pl
@@ -7,6 +8,9 @@ from skimage import measure
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import SigmaClip
+from astropy import coordinates
+from astropy import units as u
+from astropy.wcs import WCS
 from photutils import Background2D, MedianBackground
 
 from astride.utils.edge import EDGE
@@ -23,40 +27,52 @@ class Streak:
     remove_bkg : {'constant', 'map'}, optional.
         Which method to remove image background. 'constant' uses sigma-clipped
         statistics of the image to calculate the constant background value.
-        'map' derives a background map of the image. Default is 'constant'.
+        'map' derives a background map of the image.Default is 'constant'.
         If your image has varing background, use 'map'.
         bkg_box_size : int, optional
         Box size for background estimation.
     contour_threshold : float, optional
-Threshold to search contours (i.e. edges of an input image)
+        Threshold to search contours (i.e. edges of an input image)
     min_points: int, optional
-    The number of minimum data points in each edge.
+        The number of minimum data points in each edge.
     shape_cut : float, optional
-    An empirical shape factor cut.
+        An empirical shape factor cut.
     area_cut : float, optional
-    An empirical area cut.
+        An empirical area cut.
     radius_dev_cut : float, optional
-    An empirical radius deviation cut.
+        An empirical radius deviation cut.
     connectivity_angle: float, optional
-    An maximum angle to connect each separated edge.
+        An maximum angle to connect each separated edge.
+    fully_connected: str, optional
+        See skimage.measure.find_contours for details.
     output_path: str, optional
-    Path to save figures and output files. If None, the base filename
-    is used as the folder name.
         Path to save figures and output files. If None, the input folder name
         and base filename is used as the output folder name.
     """
     def __init__(self, filename, remove_bkg='constant', bkg_box_size=50,
-            contour_threshold=3., min_points=10, shape_cut=0.2,
-            area_cut=10., radius_dev_cut=0.5, connectivity_angle=3.,
-            output_path=None):
-
+                 contour_threshold=3., min_points=10, shape_cut=0.2,
+                 area_cut=10., radius_dev_cut=0.5, connectivity_angle=3.,
+                 fully_connected='high', output_path=None):
+        
         if isinstance( filename, np.ndarray ):
             self.raw_image = filename
+            self.wcsinfo = False
             assert(output_path is not None)
         else:
             hdulist = fits.open(filename)
             self.raw_image = hdulist[0].data.astype(np.float64)
+            # check wCS info
+            try:
+                wcsinfo = hdulist[0].header["CTYPE1"]
+                if wcsinfo:
+                    self.wcsinfo = True
+                    self.filename = filename
+            except:
+                self.wcsinfo = False
+
             hdulist.close()
+
+
 
         # Background structure and background map
         self._bkg = None
@@ -87,6 +103,7 @@ Threshold to search contours (i.e. edges of an input image)
         self.area_cut = area_cut
         self.radius_dev_cut = radius_dev_cut
         self.connectivity_angle = connectivity_angle
+        self.fully_connected = fully_connected
 
         # Set output path.
         if output_path is None:
@@ -133,8 +150,8 @@ Threshold to search contours (i.e. edges of an input image)
         # Find contours.
         # Returned contours is the list of [row, columns] (i.e. [y, x])
         contours = measure.find_contours(
-            self.image, self._std * self.contour_threshold, fully_connected='high'
-                                         )
+            self.image, self._std * self.contour_threshold,
+            fully_connected=self.fully_connected)
 
         # Quantify shapes of the contours and save them as 'edges'.
         edge = EDGE(contours, min_points=self.min_points,
@@ -152,13 +169,13 @@ Threshold to search contours (i.e. edges of an input image)
         self.streaks = edge.get_edges()
 
     def _detect_sources(self):
-        from photutils import daofind
+        from photutils import DAOStarFinder
 
         fwhm = 3.
         detection_threshold = 3.
-        sources = daofind(self.image,
-                          threshold=(self._med + self._std *
-                          detection_threshold), fwhm=fwhm)
+        daofind = DAOStarFinder(threshold=(self._med + self._std *
+                                detection_threshold), fwhm=fwhm)
+        sources = daofind.find_stars(self.image)
         pl.plot(sources['xcentroid'], sources['ycentroid'], 'r.')
 
     def _find_box(self, n, edges, xs, ys):
@@ -227,14 +244,14 @@ Threshold to search contours (i.e. edges of an input image)
         pl.imshow(plot_data, origin='lower', cmap='gray')
 
         # Plot all raw borders. Test purpose only.
-        #edges = self.raw_borders
-        #for n, edge in enumerate(edges):
-        #    pl.plot(edge['x'], edge['y'])
-        #    pl.text(edge['x'][0], edge['y'][1],
-        #            '%.2f' % (edge['shape_factor']), color='b', fontsize=10)
-        #pl.axis([0, self.image.shape[0], 0, self.image.shape[1]])
-        #pl.savefig('%sall.png' % self.output_path)
-        #return 0
+        # edges = self.raw_borders
+        # for n, edge in enumerate(edges):
+        #     pl.plot(edge['x'], edge['y'])
+        #     pl.text(edge['x'][0], edge['y'][1],
+        #             '%.2f' % (edge['shape_factor']), color='b', fontsize=10)
+        # pl.axis([0, self.image.shape[0], 0, self.image.shape[1]])
+        # pl.savefig('%sall.png' % self.output_path)
+        # return 0
 
         edges = self.streaks
         # Plot all contours.
@@ -289,6 +306,79 @@ Threshold to search contours (i.e. edges of an input image)
         # Clear figure.
         pl.clf()
 
+    def xy2sky(self, filename, x, y, sep=':'):
+        """
+        Converts physical coordinates to WCS coordinates for STDOUT.
+
+        Parameters
+        ----------
+        filename: str
+            FITS image file name with path.
+        x: float
+            x coordinate of object.
+        y: float
+            y coordinate of object.
+        sep: float
+            delimiter for HMSDMS format.
+
+        Returns
+        -------
+        coord: str
+            Converted string of coordinate.
+        """
+
+        try:
+            header = fits.getheader(filename)
+            w = WCS(header)
+            astcoords_deg = w.wcs_pix2world([[x, y]], 0)
+            c = coordinates.SkyCoord(astcoords_deg * u.deg,
+                                             frame='icrs')
+
+            alpha = c.to_string(style='hmsdms', sep=sep, precision=2)[0]
+            delta = c.to_string(style='hmsdms', sep=sep, precision=1)[0]
+
+            coord = '{0} {1}'.format(alpha.split(' ')[0],
+                                    delta.split(' ')[1])
+            return coord
+        except Exception as e:
+            _ = e
+            pass
+
+    def xy2sky2(self, filename, x, y):
+        """
+        Converts physical coordinates to WCS coordinates for STDOUT.
+
+        Parameters
+        ----------
+        filename: str
+            FITS image file name with path.
+        x: float
+            x coordinate of object.
+        y: float
+            y coordinate of object.
+        sep: float
+            delimiter for HMSDMS format.
+
+        Returns
+        -------
+        astcoords: list
+            a list of coordinates.
+        """
+
+        try:
+            header = fits.getheader(filename)
+            w = WCS(header)
+            astcoords_deg = w.wcs_pix2world([[x, y]], 0)
+
+            astcoords = coordinates.SkyCoord(
+                astcoords_deg * u.deg, frame='icrs')
+
+            return astcoords[0]
+
+        except Exception as e:
+            _ = e
+            pass
+
     def write_outputs(self):
         """Write information of detected streaks."""
 
@@ -296,25 +386,53 @@ Threshold to search contours (i.e. edges of an input image)
             os.makedirs(self.output_path)
 
         fp = open('%sstreaks.txt' % self.output_path, 'w')
-        fp.writelines('#ID x_center y_center area perimeter shape_factor ' +
-                      'radius_deviation slope_angle intercept connectivity\n')
-        for n, edge in enumerate(self.streaks):
-            line = '%2d %7.2f %7.2f %6.1f %6.1f %6.3f %6.2f %5.2f %7.2f %2d\n' \
-                   % \
-                   (
-                       edge['index'], edge['x_center'], edge['y_center'],
-                       edge['area'], edge['perimeter'], edge['shape_factor'],
-                       edge['radius_deviation'], edge['slope_angle'],
-                       edge['intercept'], edge['connectivity']
-                   )
-            fp.writelines(line)
+        if not self.wcsinfo:
+            fp.writelines('#ID x_center y_center area perimeter shape_factor ' +
+                          'radius_deviation slope_angle intercept ' +
+                          'connectivity\n')
+            for n, edge in enumerate(self.streaks):
+                line_str = '%2d %7.2f %7.2f %6.1f %6.1f %6.3f ' + \
+                           '%6.2f %5.2f %7.2f %2d\n'
+                line = line_str % \
+                       (
+                           edge['index'], edge['x_center'], edge['y_center'],
+                           edge['area'], edge['perimeter'],
+                           edge['shape_factor'],
+                           edge['radius_deviation'], edge['slope_angle'],
+                           edge['intercept'], edge['connectivity']
+                       )
+                fp.writelines(line)
+        elif self.wcsinfo:
+            fp.writelines('#ID x_center y_center ra(hms) dec(dms) ra(deg) ' +
+                          'dec(deg) area perimeter shape_factor ' +
+                          'radius_deviation slope_angle intercept ' +
+                          'connectivity\n')
+            for n, edge in enumerate(self.streaks):
+                line_str = '%2d %7.2f %7.2f %s %s %s %6.1f %6.1f ' + \
+                           '%6.3f %6.2f %5.2f %7.2f %2d\n'
+                line = line_str % \
+                       (
+                           edge['index'], edge['x_center'], edge['y_center'],
+                           self.xy2sky(self.filename, edge['x_center'],
+                                       edge['y_center']),
+                           self.xy2sky2(self.filename, edge['x_center'],
+                                        edge['y_center']).ra.degree,
+                           self.xy2sky2(self.filename, edge['x_center'],
+                                        edge['y_center']).dec.degree,
+                           edge['area'], edge['perimeter'],
+                           edge['shape_factor'],
+                           edge['radius_deviation'], edge['slope_angle'],
+                           edge['intercept'], edge['connectivity']
+                       )
+                fp.writelines(line)
         fp.close()
+
 
 if __name__ == '__main__':
     import time
 
-    streak = Streak('./datasets/samples/long.fits')
-    #streak = Streak('/Users/kim/Dropbox/iPythonNotebook/ASTRiDE/mgm035.fts',
+    streak = Streak(sys.argv[1])
+    # streak = Streak('/Users/kim/Dropbox/iPythonNotebook/ASTRiDE/mgm035.fts',
     #                shape_cut=0.3, radius_dev_cut=0.4)
 
     start = time.time()
